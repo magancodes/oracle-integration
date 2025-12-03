@@ -2,7 +2,6 @@
 
 import { type SymbolPrice, PriceSource } from "@/lib/types/oracle"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { TrendingUp, TrendingDown, Activity, AlertTriangle, CheckCircle } from "lucide-react"
 
@@ -59,7 +58,7 @@ export function PriceCard({ price, previousPrice, onClick }: PriceCardProps) {
       <CardContent>
         <div className="space-y-3">
           {/* Main Price */}
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-2xl font-bold font-mono tracking-tight">${formatPrice(price.price)}</span>
             <div
               className={cn(
@@ -73,26 +72,32 @@ export function PriceCard({ price, previousPrice, onClick }: PriceCardProps) {
           </div>
 
           {/* Confidence & Deviation */}
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
             <span>Confidence: ±${formatPrice(price.confidence)}</span>
             <span>Deviation: {price.deviation.toFixed(2)} bps</span>
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
+          <div className="space-y-1.5">
             {price.sources.map((source, idx) => (
-              <Badge
+              <div
                 key={idx}
-                variant="outline"
-                className={cn("text-xs truncate max-w-full", getSourceBadge(source.source))}
+                className={cn(
+                  "flex items-center justify-between px-2 py-1.5 rounded text-xs border w-full min-w-0",
+                  getSourceBadge(source.source),
+                )}
               >
-                <span className="truncate">
-                  {source.source}: ${formatPrice(source.price)}
-                </span>
-              </Badge>
+                <span className="font-medium shrink-0">{source.source}</span>
+                <div className="flex items-center gap-2 min-w-0 justify-end">
+                  <span className="font-mono truncate">${formatPrice(source.price)}</span>
+                  <span className="text-[10px] opacity-70 shrink-0 hidden sm:inline">
+                    {formatTime(source.timestamp)}
+                  </span>
+                </div>
+              </div>
             ))}
           </div>
 
-          <div className="flex items-center justify-between text-xs gap-2">
+          <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50 flex-wrap gap-1">
             <span className="text-muted-foreground truncate">Updated: {formatTime(price.timestamp)}</span>
             <span
               className={cn(

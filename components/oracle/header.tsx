@@ -63,7 +63,7 @@ export function Header({ status }: HeaderProps) {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Clock className="h-4 w-4" />
-                    <span>{status.uptime}% uptime</span>
+                    <span>{status.uptime.toFixed(1)}% uptime</span>
                   </div>
                 </div>
               </>

@@ -197,11 +197,11 @@ export function Dashboard() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">API Endpoint:</span>
-                    <code className="text-xs bg-muted px-2 py-0.5 rounded">crossbar.switchboard.xyz</code>
+                    <code className="text-xs bg-muted px-2 py-0.5 rounded">ondemand.switchboard.xyz</code>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Feed Type:</span>
-                    <span>Aggregator</span>
+                    <span>On-Demand Aggregator</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Update Frequency:</span>

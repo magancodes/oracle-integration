@@ -71,7 +71,7 @@ export function HealthStatus({ status }: HealthStatusProps) {
           {/* Summary Stats */}
           <div className="grid grid-cols-3 gap-4">
             <div className="text-center p-3 rounded-lg bg-muted/50">
-              <div className="text-2xl font-bold text-emerald-500">{status.uptime}%</div>
+              <div className="text-2xl font-bold text-emerald-500">{status.uptime.toFixed(1)}%</div>
               <div className="text-xs text-muted-foreground">Uptime</div>
             </div>
             <div className="text-center p-3 rounded-lg bg-muted/50">
@@ -124,7 +124,7 @@ function SourceHealthRow({ health }: { health: OracleHealth }) {
         </div>
         <div className="flex items-center gap-1">
           <Database className="h-3 w-3 text-muted-foreground" />
-          <span className="text-emerald-500">{health.successRate}%</span>
+          <span className="text-emerald-500">{health.successRate.toFixed(1)}%</span>
         </div>
         <div className="flex items-center gap-1">
           <Clock className="h-3 w-3 text-muted-foreground" />

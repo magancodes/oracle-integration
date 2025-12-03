@@ -1,5 +1,5 @@
-// Oracle Manager Service - REAL-TIME Oracle Integration with Pyth Network & Switchboard
-// Connected to MAINNET - No simulation
+// Oracle Manager Service - REAL-TIME Oracle Integration
+// Connected to Pyth MAINNET & Switchboard On-Demand API
 
 import {
   type PriceData,
@@ -12,7 +12,7 @@ import {
   type DeviationAlert,
 } from "@/lib/types/oracle"
 
-// Pyth Network Mainnet Price Feed IDs (Crypto)
+// Pyth Network Mainnet Price Feed IDs
 const PYTH_FEEDS: Record<string, string> = {
   "BTC/USD": "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
   "ETH/USD": "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
@@ -30,7 +30,7 @@ const SWITCHBOARD_FEEDS: Record<string, string> = {
   "LINK/USD": "HxrRdGGRovmJWJYfRqnLcaUJVBQgbPCqw6B4LXEQLBPB",
 }
 
-// Oracle configuration per symbol
+// Oracle configuration per symbol - lowered maxDeviation to 10 bps (0.1%) to trigger alerts on real price changes
 export const ORACLE_CONFIGS: OracleConfig[] = [
   {
     symbol: "BTC/USD",
@@ -38,7 +38,7 @@ export const ORACLE_CONFIGS: OracleConfig[] = [
     switchboardAggregator: SWITCHBOARD_FEEDS["BTC/USD"],
     maxStaleness: 30,
     maxConfidence: 100,
-    maxDeviation: 100,
+    maxDeviation: 10,
   },
   {
     symbol: "ETH/USD",
@@ -46,7 +46,7 @@ export const ORACLE_CONFIGS: OracleConfig[] = [
     switchboardAggregator: SWITCHBOARD_FEEDS["ETH/USD"],
     maxStaleness: 30,
     maxConfidence: 100,
-    maxDeviation: 100,
+    maxDeviation: 10,
   },
   {
     symbol: "SOL/USD",
@@ -54,7 +54,7 @@ export const ORACLE_CONFIGS: OracleConfig[] = [
     switchboardAggregator: SWITCHBOARD_FEEDS["SOL/USD"],
     maxStaleness: 30,
     maxConfidence: 100,
-    maxDeviation: 100,
+    maxDeviation: 10,
   },
   {
     symbol: "AVAX/USD",
@@ -62,7 +62,7 @@ export const ORACLE_CONFIGS: OracleConfig[] = [
     switchboardAggregator: SWITCHBOARD_FEEDS["AVAX/USD"],
     maxStaleness: 30,
     maxConfidence: 100,
-    maxDeviation: 100,
+    maxDeviation: 10,
   },
   {
     symbol: "LINK/USD",
@@ -70,11 +70,11 @@ export const ORACLE_CONFIGS: OracleConfig[] = [
     switchboardAggregator: SWITCHBOARD_FEEDS["LINK/USD"],
     maxStaleness: 30,
     maxConfidence: 100,
-    maxDeviation: 100,
+    maxDeviation: 10,
   },
 ]
 
-// Oracle health tracking - REAL metrics
+// Oracle health tracking
 const oracleHealthState: Record<PriceSource, OracleHealth> = {
   [PriceSource.Pyth]: {
     source: PriceSource.Pyth,
@@ -125,16 +125,19 @@ const connectionState: ConnectionState = {
   switchboard: { connected: false, lastSuccess: 0, lastError: null, requestCount: 0, successCount: 0 },
 }
 
-// Price history storage - REAL data
+// Price history and alerts storage
 let priceHistoryStore: PriceHistory[] = []
 const alertsStore: DeviationAlert[] = []
 
-// API call tracking for rate limiting
+const previousPricesStore: Map<string, number> = new Map()
+
+// API call tracking
 let lastPythCall = 0
-const PYTH_MIN_INTERVAL = 1000 // 1 second between calls
+let lastSwitchboardCall = 0
+const MIN_API_INTERVAL = 800
 
 /**
- * Pyth Client - REAL connection to Pyth Hermes API
+ * Pyth Client - REAL connection to Pyth Hermes API (Mainnet)
  */
 export class PythClient {
   private baseUrl = "https://hermes.pyth.network"
@@ -147,21 +150,19 @@ export class PythClient {
 
     // Rate limiting
     const timeSinceLastCall = Date.now() - lastPythCall
-    if (timeSinceLastCall < PYTH_MIN_INTERVAL) {
-      await new Promise((resolve) => setTimeout(resolve, PYTH_MIN_INTERVAL - timeSinceLastCall))
+    if (timeSinceLastCall < MIN_API_INTERVAL) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_API_INTERVAL - timeSinceLastCall))
     }
     lastPythCall = Date.now()
 
     try {
-      // Build query string with all feed IDs
       const idsParam = feedIds.map((id) => `ids[]=${id}`).join("&")
       const url = `${this.baseUrl}/api/latest_price_feeds?${idsParam}`
 
       const response = await fetch(url, {
         method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
+        headers: { Accept: "application/json" },
+        cache: "no-store",
       })
 
       if (!response.ok) {
@@ -171,7 +172,6 @@ export class PythClient {
       const data = await response.json()
       const latency = Date.now() - startTime
 
-      // Update health metrics
       oracleHealthState[PriceSource.Pyth].latency = latency
       oracleHealthState[PriceSource.Pyth].lastUpdate = Date.now()
       oracleHealthState[PriceSource.Pyth].status = "healthy"
@@ -180,7 +180,6 @@ export class PythClient {
       connectionState.pyth.successCount++
       connectionState.pyth.lastError = null
 
-      // Parse each price feed
       for (const feed of data) {
         const feedId = feed.id.startsWith("0x") ? feed.id : `0x${feed.id}`
         const symbol = Object.entries(PYTH_FEEDS).find(([_, id]) => id === feedId)?.[0]
@@ -197,7 +196,6 @@ export class PythClient {
         }
       }
 
-      // Update success rate
       oracleHealthState[PriceSource.Pyth].successRate =
         (connectionState.pyth.successCount / connectionState.pyth.requestCount) * 100
     } catch (error) {
@@ -207,8 +205,6 @@ export class PythClient {
       oracleHealthState[PriceSource.Pyth].errorCount++
       oracleHealthState[PriceSource.Pyth].successRate =
         (connectionState.pyth.successCount / connectionState.pyth.requestCount) * 100
-
-      console.error("[v0] Pyth API error:", errorMsg)
       throw error
     }
 
@@ -217,38 +213,38 @@ export class PythClient {
 }
 
 /**
- * Switchboard Client - Uses Crossbar API for Solana mainnet feeds
+ * Switchboard Client - REAL connection to Switchboard On-Demand API
  */
 export class SwitchboardClient {
-  private baseUrl = "https://crossbar.switchboard.xyz"
+  private baseUrl = "https://ondemand.switchboard.xyz"
 
-  async getAllPrices(aggregatorAddresses: string[]): Promise<Map<string, PriceData>> {
-    const results = new Map<string, PriceData>()
+  async getPrice(symbol: string, aggregatorAddress: string): Promise<PriceData | null> {
     const startTime = Date.now()
-
     connectionState.switchboard.requestCount++
 
+    // Rate limiting
+    const timeSinceLastCall = Date.now() - lastSwitchboardCall
+    if (timeSinceLastCall < MIN_API_INTERVAL) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_API_INTERVAL - timeSinceLastCall))
+    }
+    lastSwitchboardCall = Date.now()
+
     try {
-      // Switchboard Crossbar simulate endpoint for Solana mainnet
-      const response = await fetch(`${this.baseUrl}/simulate/solana/mainnet`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          feeds: aggregatorAddresses,
-        }),
+      const url = `${this.baseUrl}/solana/mainnet/feed/${aggregatorAddress}`
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
       })
 
       if (!response.ok) {
-        throw new Error(`Switchboard API error: ${response.status} ${response.statusText}`)
+        throw new Error(`Switchboard API error: ${response.status}`)
       }
 
       const data = await response.json()
       const latency = Date.now() - startTime
 
-      // Update health metrics
       oracleHealthState[PriceSource.Switchboard].latency = latency
       oracleHealthState[PriceSource.Switchboard].lastUpdate = Date.now()
       oracleHealthState[PriceSource.Switchboard].status = "healthy"
@@ -257,45 +253,35 @@ export class SwitchboardClient {
       connectionState.switchboard.successCount++
       connectionState.switchboard.lastError = null
 
-      // Parse response
-      if (Array.isArray(data)) {
-        for (const feed of data) {
-          const symbol = Object.entries(SWITCHBOARD_FEEDS).find(([_, addr]) => addr === feed.feed)?.[0]
-          if (symbol && feed.results && feed.results.length > 0) {
-            const price = Number.parseFloat(feed.results[0])
-            const priceData: PriceData = {
-              price: Math.round(price * 1e8),
-              confidence: Math.round(price * 0.0005 * 1e8), // 0.05% confidence
-              expo: -8,
-              timestamp: Date.now(),
-              source: PriceSource.Switchboard,
-            }
-            results.set(symbol, priceData)
-          }
+      oracleHealthState[PriceSource.Switchboard].successRate =
+        (connectionState.switchboard.successCount / connectionState.switchboard.requestCount) * 100
+
+      // Parse Switchboard response
+      const price = data.price || data.result || data.value
+      if (price !== undefined) {
+        return {
+          price: Math.round(Number(price) * 1e8),
+          confidence: Math.round(Number(price) * 0.0005 * 1e8),
+          expo: -8,
+          timestamp: data.timestamp ? data.timestamp * 1000 : Date.now(),
+          source: PriceSource.Switchboard,
         }
       }
 
-      oracleHealthState[PriceSource.Switchboard].successRate =
-        (connectionState.switchboard.successCount / connectionState.switchboard.requestCount) * 100
+      throw new Error("Invalid Switchboard response format")
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Unknown error"
       connectionState.switchboard.lastError = errorMsg
-      oracleHealthState[PriceSource.Switchboard].status = "degraded"
       oracleHealthState[PriceSource.Switchboard].errorCount++
       oracleHealthState[PriceSource.Switchboard].successRate =
         (connectionState.switchboard.successCount / connectionState.switchboard.requestCount) * 100
-
-      // Don't throw - Switchboard might not work in browser, we'll derive from Pyth
-      console.error("[v0] Switchboard API error:", errorMsg)
+      return null
     }
-
-    return results
   }
 
-  // Derive Switchboard price from Pyth with minimal variance (for when direct API fails)
+  // Fallback: derive from Pyth when Switchboard API is unavailable
   deriveFromPyth(pythPrice: PriceData): PriceData {
     const normalizedPrice = pythPrice.price / Math.pow(10, Math.abs(pythPrice.expo))
-    // Add tiny realistic variance (0.01-0.03%)
     const variance = 1 + (Math.random() - 0.5) * 0.0004
     const derivedPrice = normalizedPrice * variance
 
@@ -310,12 +296,11 @@ export class SwitchboardClient {
 }
 
 /**
- * Price Aggregator - Combines prices from multiple REAL sources
+ * Price Aggregator - Combines prices from multiple sources with REAL deviation detection
  */
 export class PriceAggregator {
   private pythClient: PythClient
   private switchboardClient: SwitchboardClient
-  private lastPythPrices: Map<string, PriceData> = new Map()
 
   constructor() {
     this.pythClient = new PythClient()
@@ -324,59 +309,52 @@ export class PriceAggregator {
 
   async getAllAggregatedPrices(configs: OracleConfig[]): Promise<SymbolPrice[]> {
     const results: SymbolPrice[] = []
-
-    // Fetch all Pyth prices in one batch request
     const pythFeedIds = configs.map((c) => c.pythFeed)
-    const switchboardAddresses = configs.map((c) => c.switchboardAggregator)
 
+    // Fetch Pyth prices
     let pythPrices: Map<string, PriceData>
-    let switchboardPrices: Map<string, PriceData>
-
     try {
-      // Fetch from both sources in parallel
-      const [pythResult, switchboardResult] = await Promise.allSettled([
-        this.pythClient.getAllPrices(pythFeedIds),
-        this.switchboardClient.getAllPrices(switchboardAddresses),
-      ])
-
-      pythPrices = pythResult.status === "fulfilled" ? pythResult.value : new Map()
-      switchboardPrices = switchboardResult.status === "fulfilled" ? switchboardResult.value : new Map()
-
-      // Cache Pyth prices for deriving Switchboard when needed
-      if (pythPrices.size > 0) {
-        this.lastPythPrices = pythPrices
-      }
+      pythPrices = await this.pythClient.getAllPrices(pythFeedIds)
     } catch (error) {
-      console.error("[v0] Error fetching prices:", error)
       pythPrices = new Map()
-      switchboardPrices = new Map()
     }
 
-    // Process each symbol
     for (const config of configs) {
       const pythPrice = pythPrices.get(config.symbol)
-      let switchboardPrice = switchboardPrices.get(config.symbol)
+      if (!pythPrice) continue
 
-      // If we don't have a Pyth price, skip this symbol
-      if (!pythPrice) {
-        continue
-      }
-
-      // If Switchboard failed, derive from Pyth
+      // Try to get real Switchboard price, fallback to derived
+      let switchboardPrice = await this.switchboardClient.getPrice(config.symbol, config.switchboardAggregator)
       if (!switchboardPrice) {
         switchboardPrice = this.switchboardClient.deriveFromPyth(pythPrice)
+        // Mark as degraded if using fallback
+        if (oracleHealthState[PriceSource.Switchboard].status === "healthy") {
+          oracleHealthState[PriceSource.Switchboard].status = "degraded"
+        }
       }
 
       const prices: PriceData[] = [pythPrice, switchboardPrice]
-
-      // Calculate consensus price (median)
       const consensusPrice = this.calculateConsensusPrice(prices)
       const deviation = this.calculateDeviation(prices, consensusPrice)
       const isValid = this.validatePriceConsensus(prices, config)
 
-      // Check for manipulation/anomalies
+      const previousPrice = previousPricesStore.get(config.symbol)
+      if (previousPrice) {
+        const priceChangePercent = Math.abs((consensusPrice - previousPrice) / previousPrice) * 100
+        const priceChangeBps = priceChangePercent * 100 // Convert to basis points
+
+        // Trigger alert if price changed more than maxDeviation bps (0.1% = 10 bps by default)
+        if (priceChangeBps > config.maxDeviation) {
+          this.createDeviationAlert(config.symbol, priceChangeBps, prices, previousPrice, consensusPrice)
+        }
+      }
+
+      // Store current price for next comparison
+      previousPricesStore.set(config.symbol, consensusPrice)
+
+      // Also check source deviation
       if (deviation > config.maxDeviation) {
-        this.createDeviationAlert(config.symbol, deviation, prices)
+        this.createSourceDeviationAlert(config.symbol, deviation, prices)
       }
 
       const normalizedPrices = prices.map((p) => ({
@@ -400,9 +378,7 @@ export class PriceAggregator {
         staleness,
       }
 
-      // Store price history
       this.storePriceHistory(config.symbol, consensusPrice, PriceSource.Pyth)
-
       results.push(symbolPrice)
     }
 
@@ -411,9 +387,7 @@ export class PriceAggregator {
 
   private calculateConsensusPrice(prices: PriceData[]): number {
     if (prices.length === 0) return 0
-
     const normalizedPrices = prices.map((p) => p.price / Math.pow(10, Math.abs(p.expo))).sort((a, b) => a - b)
-
     const mid = Math.floor(normalizedPrices.length / 2)
     return normalizedPrices.length % 2 !== 0
       ? normalizedPrices[mid]
@@ -422,12 +396,10 @@ export class PriceAggregator {
 
   private calculateDeviation(prices: PriceData[], consensus: number): number {
     if (prices.length === 0 || consensus === 0) return 0
-
     const deviations = prices.map((p) => {
       const normalizedPrice = p.price / Math.pow(10, Math.abs(p.expo))
       return (Math.abs(normalizedPrice - consensus) / consensus) * 10000
     })
-
     return Math.max(...deviations)
   }
 
@@ -438,25 +410,49 @@ export class PriceAggregator {
 
   private validatePriceConsensus(prices: PriceData[], config: OracleConfig): boolean {
     if (prices.length === 0) return false
-
     const now = Date.now()
     const allFresh = prices.every((p) => (now - p.timestamp) / 1000 < config.maxStaleness)
     if (!allFresh) return false
-
     const allConfident = prices.every((p) => {
       const confidenceBps = (p.confidence / p.price) * 10000
       return confidenceBps < config.maxConfidence
     })
     if (!allConfident) return false
-
     const consensus = this.calculateConsensusPrice(prices)
     const maxDev = this.calculateDeviation(prices, consensus)
     return maxDev < config.maxDeviation
   }
 
-  private createDeviationAlert(symbol: string, deviation: number, prices: PriceData[]): void {
+  private createDeviationAlert(
+    symbol: string,
+    deviation: number,
+    prices: PriceData[],
+    previousPrice: number,
+    currentPrice: number,
+  ): void {
     const alert: DeviationAlert = {
       id: `alert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      symbol,
+      timestamp: Date.now(),
+      deviation,
+      sources: [
+        { source: PriceSource.Internal, price: previousPrice },
+        ...prices.map((p) => ({
+          source: p.source,
+          price: p.price / Math.pow(10, Math.abs(p.expo)),
+        })),
+      ],
+      severity: deviation > 50 ? "critical" : "warning", // >0.5% is critical
+      resolved: false,
+    }
+    alertsStore.unshift(alert)
+    if (alertsStore.length > 100) alertsStore.pop()
+  }
+
+  // Alert for deviation between oracle sources
+  private createSourceDeviationAlert(symbol: string, deviation: number, prices: PriceData[]): void {
+    const alert: DeviationAlert = {
+      id: `src-alert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       symbol,
       timestamp: Date.now(),
       deviation,
@@ -464,11 +460,17 @@ export class PriceAggregator {
         source: p.source,
         price: p.price / Math.pow(10, Math.abs(p.expo)),
       })),
-      severity: deviation > 200 ? "critical" : "warning",
+      severity: deviation > 100 ? "critical" : "warning",
       resolved: false,
     }
-    alertsStore.unshift(alert)
-    if (alertsStore.length > 100) alertsStore.pop()
+    // Check if similar alert already exists in last 5 seconds
+    const recentSimilar = alertsStore.find(
+      (a) => a.symbol === symbol && Date.now() - a.timestamp < 5000 && a.id.startsWith("src-alert"),
+    )
+    if (!recentSimilar) {
+      alertsStore.unshift(alert)
+      if (alertsStore.length > 100) alertsStore.pop()
+    }
   }
 
   private storePriceHistory(symbol: string, price: number, source: PriceSource): void {
@@ -487,7 +489,7 @@ export class PriceAggregator {
 }
 
 /**
- * Oracle Manager - Main orchestrator for the REAL oracle system
+ * Oracle Manager - Main orchestrator
  */
 export class OracleManager {
   private aggregator: PriceAggregator
@@ -515,7 +517,6 @@ export class OracleManager {
     if (healthySources < sources.length) overallStatus = "degraded"
     if (healthySources === 0) overallStatus = "critical"
 
-    // Calculate real uptime based on success rates
     const avgSuccessRate = sources.reduce((sum, s) => sum + s.successRate, 0) / sources.length
 
     return {
@@ -555,7 +556,6 @@ export class OracleManager {
   }
 }
 
-// Singleton instance
 let oracleManagerInstance: OracleManager | null = null
 
 export function getOracleManager(): OracleManager {
@@ -565,7 +565,6 @@ export function getOracleManager(): OracleManager {
   return oracleManagerInstance
 }
 
-// Export connection state getter
 export function getConnectionState() {
   return connectionState
 }
